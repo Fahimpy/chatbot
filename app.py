@@ -3,6 +3,7 @@ import requests
 import json
 from flask import Flask, request
 from fuzzywuzzy import fuzz, process  # ফাজি ম্যাচিং লাইব্রেরি
+from transformers import pipeline  # NLP লাইব্রেরি
 
 app = Flask(__name__)
 
@@ -11,6 +12,10 @@ PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 
 # JSON ফাইলের পাথ (প্রশ্ন এবং উত্তর সংরক্ষণ করা হয়েছে)
 RESPONSES_FILE = "responses.json"
+
+# Transformers-এর জন্য Zero-shot Classification Pipeline
+model_name = "joeddav/xlm-roberta-large-xnli"  # বহুভাষী মডেল
+classifier = pipeline("zero-shot-classification", model=model_name)
 
 @app.route("/", methods=["GET"])
 def verify():
@@ -39,23 +44,31 @@ def webhook():
                     received_text = message['message']['text'].lower()
                     print(f"Message from {sender_id}: {received_text}")
 
-                    # JSON থেকে উত্তর লোড করা এবং ফাজি ম্যাচিং
+                    # JSON থেকে উত্তর লোড করা এবং NLP/Fuzzy Matching প্রয়োগ
                     response_text = get_response(received_text)
                     send_message(sender_id, response_text)
     return "EVENT_RECEIVED", 200
 
 def get_response(user_message):
-    """JSON ফাইল থেকে প্রশ্নের উত্তর লোড করা এবং ফাজি ম্যাচিং প্রয়োগ করা"""
+    """JSON ফাইল থেকে প্রশ্নের উত্তর লোড করা এবং NLP ও ফাজি ম্যাচিং ব্যবহার"""
     try:
         with open(RESPONSES_FILE, "r", encoding="utf-8") as file:
             responses = json.load(file)
+            questions = list(responses.keys())
 
-            # ফাজি ম্যাচিং ব্যবহার করে মেসেজ মেলানো
-            matched_question, score = process.extractOne(user_message, responses.keys(), scorer=fuzz.token_sort_ratio)
+            # ১. ফাজি ম্যাচিং ব্যবহার করে প্রশ্ন খুঁজুন
+            matched_question, fuzzy_score = process.extractOne(user_message, questions, scorer=fuzz.token_sort_ratio)
 
-            # যদি ম্যাচিং স্কোর ৭০% বা তার বেশি হয়, তাহলে সেই উত্তর ফেরত দিন
-            if score >= 70:
+            # ২. Transformers-এর মাধ্যমে প্রশ্ন খুঁজুন
+            nlp_result = classifier(user_message, questions, multi_class=False)
+            nlp_question = nlp_result["labels"][0]  # সর্বাধিক মিলে যাওয়া প্রশ্ন
+            nlp_score = nlp_result["scores"][0]  # ম্যাচিং স্কোর
+
+            # ফাজি এবং NLP এর মধ্যে যেটি বেশি স্কোর করবে সেটি গ্রহণ করুন
+            if fuzzy_score >= 70 and fuzzy_score >= (nlp_score * 100):
                 return responses[matched_question]
+            elif nlp_score >= 0.70:
+                return responses[nlp_question]
             else:
                 return "দুঃখিত, আমি বুঝতে পারছি না।"  # ডিফল্ট রেসপন্স
     except Exception as e:
