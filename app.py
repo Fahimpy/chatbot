@@ -1,12 +1,16 @@
 import os
 import requests
+import json
 from flask import Flask, request
-from urllib.parse import quote as url_quote
+from fuzzywuzzy import fuzz, process  # ফাজি ম্যাচিং লাইব্রেরি
 
 app = Flask(__name__)
 
 # পেজ অ্যাক্সেস টোকেন লোড করা
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
+
+# JSON ফাইলের পাথ (প্রশ্ন এবং উত্তর সংরক্ষণ করা হয়েছে)
+RESPONSES_FILE = "responses.json"
 
 @app.route("/", methods=["GET"])
 def verify():
@@ -32,10 +36,31 @@ def webhook():
             for message in entry.get('messaging', []):
                 sender_id = message['sender']['id']
                 if 'message' in message and 'text' in message['message']:
-                    received_text = message['message']['text']
+                    received_text = message['message']['text'].lower()
                     print(f"Message from {sender_id}: {received_text}")
-                    send_message(sender_id, f"আপনার মেসেজ: {received_text}")
+
+                    # JSON থেকে উত্তর লোড করা এবং ফাজি ম্যাচিং
+                    response_text = get_response(received_text)
+                    send_message(sender_id, response_text)
     return "EVENT_RECEIVED", 200
+
+def get_response(user_message):
+    """JSON ফাইল থেকে প্রশ্নের উত্তর লোড করা এবং ফাজি ম্যাচিং প্রয়োগ করা"""
+    try:
+        with open(RESPONSES_FILE, "r", encoding="utf-8") as file:
+            responses = json.load(file)
+
+            # ফাজি ম্যাচিং ব্যবহার করে মেসেজ মেলানো
+            matched_question, score = process.extractOne(user_message, responses.keys(), scorer=fuzz.token_sort_ratio)
+
+            # যদি ম্যাচিং স্কোর ৭০% বা তার বেশি হয়, তাহলে সেই উত্তর ফেরত দিন
+            if score >= 70:
+                return responses[matched_question]
+            else:
+                return "দুঃখিত, আমি বুঝতে পারছি না।"  # ডিফল্ট রেসপন্স
+    except Exception as e:
+        print(f"Error loading JSON file: {e}")
+        return "দুঃখিত, উত্তর লোড করতে সমস্যা হচ্ছে।"
 
 def send_message(recipient_id, message_text):
     """Send a response to the user"""
@@ -54,5 +79,3 @@ def send_message(recipient_id, message_text):
 if __name__ == "__main__":
     # Flask's built-in development server
     app.run(debug=True, host="0.0.0.0", port=5000)
-
-
