@@ -16,7 +16,7 @@ def verify():
     challenge = request.args.get("hub.challenge")
 
     if mode == "subscribe" and challenge:
-        if token == "my_secure_token":  # আপনার Verify Token
+        if token == "QEN6uir6Tx4e846PvKf0x1QiVeq-NLv-UjuQjR9RS5M":  # সঠিক Verify Token দিন
             return challenge, 200
         return "Verification token mismatch", 403
     return "Hello, World!", 200
